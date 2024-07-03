@@ -78,12 +78,14 @@ fn main() -> io::Result<()> {
     // Open the output file for writing
     let mut output_file = File::create(&output_path)?;
 
-    // Write the header
-    writeln!(output_file, "id,name")?;
+    // Write the header (replicate from input file)
+    writeln!(output_file, "{}", headers.join(","))?;
 
     // Write the merged data to the output file in the order they appeared
     for (id, names) in data {
-        writeln!(output_file, "{},{}", id, names.join(","))?;
+        let mut row = vec![id];
+        row.extend(names);
+        writeln!(output_file, "{}", row.join(","))?;
     }
 
     Ok(())

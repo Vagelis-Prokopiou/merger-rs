@@ -18,8 +18,16 @@ struct Args {
     id_column: String,
 
     /// Columns to merge (comma-separated list)
-    #[clap(short, long)]
+    #[clap(long)]
     columns: String,
+
+    /// Delimiter for concatenated values
+    #[clap(long, default_value = ";")]
+    concat_delimiter: String,
+
+    /// Delimiter for output headers
+    #[clap(long, default_value = ",")]
+    header_delimiter: String,
 }
 
 fn main() -> io::Result<()> {
@@ -88,15 +96,15 @@ fn main() -> io::Result<()> {
     let mut output_file = File::create(&output_path)?;
 
     // Write the header (replicate from input file)
-    writeln!(output_file, "{}", headers.join(","))?;
+    writeln!(output_file, "{}", headers.join(&args.header_delimiter))?;
 
     // Write the merged data to the output file in the order they appeared
     for (id, sets) in data {
         let mut row = vec![id];
         for set in sets {
-            row.push(set.into_iter().collect::<Vec<_>>().join(";"));
+            row.push(set.into_iter().collect::<Vec<_>>().join(&args.concat_delimiter));
         }
-        writeln!(output_file, "{}", row.join(","))?;
+        writeln!(output_file, "{}", row.join(&args.header_delimiter))?;
     }
 
     Ok(())

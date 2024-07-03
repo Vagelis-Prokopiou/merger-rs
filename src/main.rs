@@ -3,6 +3,7 @@ use linked_hash_map::LinkedHashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
+use std::collections::HashSet;
 
 #[derive(Parser)]
 struct Args {
@@ -16,13 +17,18 @@ struct Args {
     #[clap(short, long)]
     id_column: String,
 
-    /// Columns to merge
+    /// Columns to merge (comma-separated list)
     #[clap(short, long)]
-    columns: Vec<String>,
+    columns: String,
 }
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    // Split the columns argument into a vector of column names
+    let columns: Vec<String> = args.columns.split(',')
+        .map(|s| s.to_string())
+        .collect();
 
     // Specify the input and output file paths
     let input_path = Path::new(&args.input);
@@ -33,7 +39,7 @@ fn main() -> io::Result<()> {
     let reader = BufReader::new(input_file);
 
     // Create a LinkedHashMap to store the merged names for each id
-    let mut data: LinkedHashMap<String, Vec<String>> = LinkedHashMap::new();
+    let mut data: LinkedHashMap<String, Vec<HashSet<String>>> = LinkedHashMap::new();
     let mut headers: Vec<String> = Vec::new();
     let mut id_column_index: usize = 0;
     let mut column_indices: Vec<usize> = Vec::new();
@@ -56,7 +62,7 @@ fn main() -> io::Result<()> {
             }
 
             // Get the indices of the specified columns
-            for column_name in &args.columns {
+            for column_name in &columns {
                 if let Some(pos) = headers.iter().position(|h| h == column_name) {
                     column_indices.push(pos);
                 } else {
@@ -71,7 +77,10 @@ fn main() -> io::Result<()> {
                 .map(|&s| s.to_string())
                 .collect::<Vec<String>>();
 
-            data.entry(id).or_insert_with(Vec::new).extend(merged_values);
+            let entry = data.entry(id).or_insert_with(|| vec![HashSet::new(); column_indices.len()]);
+            for (set, value) in entry.iter_mut().zip(merged_values) {
+                set.insert(value);
+            }
         }
     }
 
@@ -82,9 +91,11 @@ fn main() -> io::Result<()> {
     writeln!(output_file, "{}", headers.join(","))?;
 
     // Write the merged data to the output file in the order they appeared
-    for (id, names) in data {
+    for (id, sets) in data {
         let mut row = vec![id];
-        row.extend(names);
+        for set in sets {
+            row.push(set.into_iter().collect::<Vec<_>>().join(";"));
+        }
         writeln!(output_file, "{}", row.join(","))?;
     }
 

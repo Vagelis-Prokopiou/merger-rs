@@ -1,9 +1,11 @@
+use anyhow::{Context, Result};
 use clap::Parser;
-use linked_hash_map::LinkedHashMap;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use csv;
+use itertools::Itertools; // Add this import
 use std::collections::HashSet;
+use std::fs::File;
+use linked_hash_map::LinkedHashMap;
+use std::io::Write;
 
 #[derive(Parser)]
 struct Args {
@@ -30,7 +32,7 @@ struct Args {
     header_delimiter: String,
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Split the columns argument into a vector of column names
@@ -38,65 +40,46 @@ fn main() -> io::Result<()> {
         .map(|s| s.to_string())
         .collect();
 
-    // Specify the input and output file paths
-    let input_path = Path::new(&args.input);
-    let output_path = Path::new(&args.output);
-
     // Open the input file for reading
-    let input_file = File::open(&input_path)?;
-    let reader = BufReader::new(input_file);
+    let input_file = File::open(&args.input)
+        .with_context(|| format!("Failed to open input file '{}'", args.input))?;
+    let mut rdr = csv::Reader::from_reader(input_file);
+
+    // Retrieve the headers
+    let headers = rdr.headers()?.clone();
+
+    // Get the index of the ID column
+    let id_column_index = headers.iter().position(|h| h == &args.id_column)
+        .with_context(|| format!("ID column '{}' not found in headers", args.id_column))?;
+
+    // Get the indices of the specified columns
+    let column_indices: Vec<usize> = columns.iter()
+        .map(|col| headers.iter().position(|h| h == col)
+            .with_context(|| format!("Column '{}' not found in headers", col)))
+        .collect::<Result<Vec<_>>>()?;
 
     // Create a LinkedHashMap to store the merged names for each id
     let mut data: LinkedHashMap<String, Vec<HashSet<String>>> = LinkedHashMap::new();
-    let mut headers: Vec<String> = Vec::new();
-    let mut id_column_index: usize = 0;
-    let mut column_indices: Vec<usize> = Vec::new();
 
     // Read the input file line by line
-    for (index, line) in reader.lines().enumerate() {
-        let line = line?;
-        let parts: Vec<&str> = line.split(',').collect();
+    for result in rdr.records() {
+        let record = result?;
 
-        if index == 0 {
-            // Store header names
-            headers = parts.iter().map(|&s| s.to_string()).collect();
+        let id = record[id_column_index].to_string();
 
-            // Get the index of the ID column
-            if let Some(pos) = headers.iter().position(|h| h == &args.id_column) {
-                id_column_index = pos;
-            } else {
-                eprintln!("ID column '{}' not found in headers", args.id_column);
-                return Ok(());
-            }
-
-            // Get the indices of the specified columns
-            for column_name in &columns {
-                if let Some(pos) = headers.iter().position(|h| h == column_name) {
-                    column_indices.push(pos);
-                } else {
-                    eprintln!("Column '{}' not found in headers", column_name);
-                    return Ok(());
-                }
-            }
-        } else {
-            let id = parts[id_column_index].to_string();
-            let merged_values = column_indices.iter()
-                .filter_map(|&i| parts.get(i))
-                .map(|&s| s.to_string())
-                .collect::<Vec<String>>();
-
-            let entry = data.entry(id).or_insert_with(|| vec![HashSet::new(); column_indices.len()]);
-            for (set, value) in entry.iter_mut().zip(merged_values) {
-                set.insert(value);
-            }
+        let entry = data.entry(id).or_insert_with(|| vec![HashSet::new(); column_indices.len()]);
+        for (set, &ci) in entry.iter_mut().zip(&column_indices) {
+            let value = record[ci].to_string();
+            set.insert(value);
         }
     }
 
     // Open the output file for writing
-    let mut output_file = File::create(&output_path)?;
+    let mut output_file = File::create(&args.output)
+        .with_context(|| format!("Failed to create output file '{}'", args.output))?;
 
-    // Write the header (replicate from input file)
-    writeln!(output_file, "{}", headers.join(&args.header_delimiter))?;
+    // Write the header
+    writeln!(output_file, "{}", headers.iter().join(&args.header_delimiter))?;
 
     // Write the merged data to the output file in the order they appeared
     for (id, sets) in data {
